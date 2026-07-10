@@ -7,11 +7,12 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import {
   LogOut, GraduationCap, Users, UserPlus, Settings,
   Archive, TrendingUp, CheckCircle, BookOpen, ShieldCheck, Loader2,
+  Eye, EyeOff, UserCog, Trash2,
 } from 'lucide-react';
 import type { Page } from '../../App';
 import { useAuth } from '../../context/AuthContext';
 import {
-  usersApi, groupsApi, projectsApi, advisorAssignmentsApi, archiveApi,
+  usersApi, groupsApi, projectsApi, advisorAssignmentsApi, archiveApi, groupMembersApi,
   type User, type ProjectGroup, type Project, type ArchiveEntry, type Role,
 } from '../../lib/api';
 
@@ -46,7 +47,9 @@ export function AdminDashboard({ onNavigate }: Props) {
 
   const [newGroup, setNewGroup] = useState({ group_name: '', academic_year: '', semester: '', department_mix: '' });
   const [newUser, setNewUser] = useState({ full_name: '', email: '', role: 'student' as Role, department: '', password: '' });
+  const [showNewUserPassword, setShowNewUserPassword] = useState(false);
   const [assignDraft, setAssignDraft] = useState({ group: '', advisor: '' });
+  const [memberDraft, setMemberDraft] = useState({ group: '', student: '', role_in_group: 'member' as 'leader' | 'member' });
 
   const loadAll = async () => {
     setLoading(true);
@@ -59,7 +62,10 @@ export function AdminDashboard({ onNavigate }: Props) {
       setGroups(g);
       setProjects(p);
       setArchiveEntries(a);
-      if (g[0]) setAssignDraft((prev) => ({ ...prev, group: prev.group || g[0].id }));
+      if (g[0]) {
+        setAssignDraft((prev) => ({ ...prev, group: prev.group || g[0].id }));
+        setMemberDraft((prev) => ({ ...prev, group: prev.group || g[0].id }));
+      }
     } catch (err: any) {
       setError(err.message || 'Could not load system data.');
     } finally {
@@ -72,6 +78,10 @@ export function AdminDashboard({ onNavigate }: Props) {
   }, []);
 
   const advisors = users.filter((u) => u.role === 'advisor');
+  const students = users.filter((u) => u.role === 'student');
+  const selectedMemberGroup = groups.find((g) => g.id === memberDraft.group);
+  const memberGroupStudentIds = new Set((selectedMemberGroup?.members || []).map((m) => m.student));
+  const availableStudentsForGroup = students.filter((s) => !memberGroupStudentIds.has(s.id));
   const projectByGroup = (groupId: string) => projects.find((p) => p.group === groupId);
   const pendingArchiveCount = archiveEntries.length; // archive entries here are already published; "pending" would be completed projects w/o an entry
   const completedUnarchivedProjects = projects.filter(
@@ -126,6 +136,36 @@ export function AdminDashboard({ onNavigate }: Props) {
       await loadAll();
     } catch (err: any) {
       setError(err.message || 'Could not assign the advisor.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleAddMember = async () => {
+    if (!memberDraft.group || !memberDraft.student) return;
+    setBusy(true);
+    try {
+      await groupMembersApi.create({
+        group: memberDraft.group,
+        student: memberDraft.student,
+        role_in_group: memberDraft.role_in_group,
+      });
+      setMemberDraft((prev) => ({ ...prev, student: '' }));
+      await loadAll();
+    } catch (err: any) {
+      setError(err.message || 'Could not add this student to the group.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleRemoveMember = async (memberId: string) => {
+    setBusy(true);
+    try {
+      await groupMembersApi.remove(memberId);
+      await loadAll();
+    } catch (err: any) {
+      setError(err.message || 'Could not remove this student from the group.');
     } finally {
       setBusy(false);
     }
@@ -321,6 +361,86 @@ export function AdminDashboard({ onNavigate }: Props) {
                 </div>
               </CardContent>
             </Card>
+
+            {/* Assign Students panel */}
+            <Card className="border-0 shadow-sm">
+              <CardHeader>
+                <CardTitle className="text-[#1F3A5F] text-base flex items-center gap-2">
+                  <UserCog className="w-4 h-4" />Assign Students to Group
+                </CardTitle>
+                <CardDescription>Add students so their dashboard shows the group's project</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+                  <div className="space-y-1">
+                    <label className="text-xs font-medium text-gray-600">Select Group</label>
+                    <select
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1F3A5F]/30"
+                      value={memberDraft.group}
+                      onChange={(e) => setMemberDraft({ ...memberDraft, group: e.target.value, student: '' })}
+                    >
+                      {groups.map((g) => <option key={g.id} value={g.id}>{g.group_name}</option>)}
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-medium text-gray-600">Select Student</label>
+                    <select
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1F3A5F]/30"
+                      value={memberDraft.student}
+                      onChange={(e) => setMemberDraft({ ...memberDraft, student: e.target.value })}
+                    >
+                      <option value="">Choose a student…</option>
+                      {availableStudentsForGroup.map((u) => <option key={u.id} value={u.id}>{u.full_name}</option>)}
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-medium text-gray-600">Role in Group</label>
+                    <select
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1F3A5F]/30"
+                      value={memberDraft.role_in_group}
+                      onChange={(e) => setMemberDraft({ ...memberDraft, role_in_group: e.target.value as 'leader' | 'member' })}
+                    >
+                      <option value="member">Member</option>
+                      <option value="leader">Leader</option>
+                    </select>
+                  </div>
+                  <Button className="bg-[#1F3A5F] hover:bg-[#152b47] text-sm" disabled={busy || !memberDraft.student} onClick={handleAddMember}>
+                    <UserPlus className="w-4 h-4 mr-2" />Add to Group
+                  </Button>
+                </div>
+
+                {selectedMemberGroup && (
+                  <div>
+                    <p className="text-xs font-medium text-gray-600 mb-2">
+                      Current members of {selectedMemberGroup.group_name} ({selectedMemberGroup.members.length})
+                    </p>
+                    {selectedMemberGroup.members.length === 0 ? (
+                      <p className="text-xs text-gray-400">No students assigned yet. This group won't show up on any student's dashboard until you add someone.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {selectedMemberGroup.members.map((m) => (
+                          <div key={m.id} className="flex items-center justify-between p-2 border rounded-lg text-sm">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium">{m.student_detail.full_name}</span>
+                              <span className="text-xs text-gray-400">{m.student_detail.email}</span>
+                              {m.role_in_group === 'leader' && (
+                                <Badge className="bg-[#1F3A5F] text-xs">Leader</Badge>
+                              )}
+                            </div>
+                            <Button
+                              size="sm" variant="ghost" className="h-7 px-2 text-xs text-red-600 hover:bg-red-50"
+                              disabled={busy} onClick={() => handleRemoveMember(m.id)}
+                            >
+                              <Trash2 className="w-3.5 h-3.5 mr-1" />Remove
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </TabsContent>
 
           {/* User Management */}
@@ -344,8 +464,18 @@ export function AdminDashboard({ onNavigate }: Props) {
                     <option value="advisor">advisor</option>
                     <option value="admin">admin</option>
                   </select>
-                  <input className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm" type="password" placeholder="Temp password"
-                    value={newUser.password} onChange={(e) => setNewUser({ ...newUser, password: e.target.value })} />
+                  <div className="relative">
+                    <input className="border border-gray-200 rounded-lg px-2 py-1.5 pr-8 text-sm w-full" type={showNewUserPassword ? 'text' : 'password'} placeholder="Temp password"
+                      value={newUser.password} onChange={(e) => setNewUser({ ...newUser, password: e.target.value })} />
+                    <button
+                      type="button"
+                      onClick={() => setShowNewUserPassword((prev) => !prev)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                      aria-label={showNewUserPassword ? 'Hide password' : 'Show password'}
+                    >
+                      {showNewUserPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
                 </div>
                 <div className="flex justify-end mt-2">
                   <Button className="bg-[#1F3A5F] hover:bg-[#152b47] text-sm" disabled={busy} onClick={handleCreateUser}>
